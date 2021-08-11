@@ -42,16 +42,17 @@ var (
 
 // Config holds configuration options for github logins.
 type Config struct {
-	ClientID      string `json:"clientID"`
-	ClientSecret  string `json:"clientSecret"`
-	RedirectURI   string `json:"redirectURI"`
-	Org           string `json:"org"`
-	Orgs          []Org  `json:"orgs"`
-	HostName      string `json:"hostName"`
-	RootCA        string `json:"rootCA"`
-	TeamNameField string `json:"teamNameField"`
-	LoadAllGroups bool   `json:"loadAllGroups"`
-	UseLoginAsID  bool   `json:"useLoginAsID"`
+	ClientID      string   `json:"clientID"`
+	ClientSecret  string   `json:"clientSecret"`
+	RedirectURI   string   `json:"redirectURI"`
+	Org           string   `json:"org"`
+	Orgs          []Org    `json:"orgs"`
+	Users         []string `json:"users"`
+	HostName      string   `json:"hostName"`
+	RootCA        string   `json:"rootCA"`
+	TeamNameField string   `json:"teamNameField"`
+	LoadAllGroups bool     `json:"loadAllGroups"`
+	UseLoginAsID  bool     `json:"useLoginAsID"`
 }
 
 // Org holds org-team filters, in which teams are optional.
@@ -81,6 +82,7 @@ func (c *Config) Open(id string, logger log.Logger) (connector.Connector, error)
 		redirectURI:  c.RedirectURI,
 		org:          c.Org,
 		orgs:         c.Orgs,
+		users:        c.Users,
 		clientID:     c.ClientID,
 		clientSecret: c.ClientSecret,
 		apiURL:       apiURL,
@@ -135,6 +137,7 @@ type githubConnector struct {
 	redirectURI  string
 	org          string
 	orgs         []Org
+	users        []string
 	clientID     string
 	clientSecret string
 	logger       log.Logger
@@ -277,6 +280,11 @@ func (c *githubConnector) HandleCallback(s connector.Scopes, r *http.Request) (i
 		identity.UserID = user.Login
 	}
 
+	err = c.checkUser(user.Login)
+	if err != nil {
+		return identity, err
+	}
+
 	// Only set identity.Groups if 'orgs', 'org', or 'groups' scope are specified.
 	if c.groupsRequired(s.Groups) {
 		groups, err := c.getGroups(ctx, client, s.Groups, user.Login)
@@ -322,6 +330,11 @@ func (c *githubConnector) Refresh(ctx context.Context, s connector.Scopes, ident
 	identity.PreferredUsername = user.Login
 	identity.Email = user.Email
 
+	err = c.checkUser(user.Login)
+	if err != nil {
+		return identity, err
+	}
+
 	// Only set identity.Groups if 'orgs', 'org', or 'groups' scope are specified.
 	if c.groupsRequired(s.Groups) {
 		groups, err := c.getGroups(ctx, client, s.Groups, user.Login)
@@ -332,6 +345,21 @@ func (c *githubConnector) Refresh(ctx context.Context, s connector.Scopes, ident
 	}
 
 	return identity, nil
+}
+
+// checkUser check if the allowed to be authenticated
+func (c *githubConnector) checkUser(username string) error {
+	if len(c.users) == 0 {
+		return nil
+	}
+
+	for _, user := range c.users {
+		if user == username {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("github: user %q not in required users", username)
 }
 
 // getGroups retrieves GitHub orgs and teams a user is in, if any.
